@@ -1,0 +1,36 @@
+include_rules
+
+import VK_SDK_PATH
+import BuildConfigName=Unknown
+import BuildConfigSuffix=_none
+
+# Internal Common Base Compiler Flags
+CommonCompilerFlags += -wd4820 -wd4191 -wd5045 -wd4668 -Qspectre -permissive-
+CommonCompilerFlags += -external:W0 -external:I "$(VK_SDK_PATH)/Include" -external:I "../libs" -I "../include" -W4 -WX
+
+# DotDiffCpp
+DotDiffCppOutputFilename = dotdiffcpp$(BuildConfigSuffix)
+DotDiffCppSourceFiles    = main
+
+# Linker Args
+DotDiffCppLinkerArgs         = user32.lib
+
+# Module specific compiler flags
+DotDiffCppCompilerFlags   = 
+#GraphicsCompilerFlags = -DVK_USE_PLATFORM_WIN32_KHR -DGRAPHICS_DLL_EXPORT -DDEFINE_GRAPHICS_HELPERS -DCONFIG_USE_IMGUI 
+
+# Configuration specific compiler flags
+CommonDebugCompilerFlags += -DCONFIG_DEBUG -MDd
+CommonFinalCompilerFlags += -DCONFIG_FINAL -MD
+
+# Final flag collection per module
+# Engine
+DotDiffCppDebugExecutableFlags     = $(DotDiffCppCompilerFlags) $(CommonLinkerFlags)
+DotDiffCppDebugExecutableLinkFlags = $(DotDiffCppLinkerArgs) /DEBUG -OUT:"$(FinalBinDir)$(DotDiffCppOutputFilename).exe"
+
+# Build rules
+
+: $(DotDiffCppSourceFiles).cpp |> cl %f $(CommonCompilerFlags) -Fd%2o -Fe"%o" $(DotDiffCppDebugExecutableFlags) |> $(ObjDir)%B.obj $(ObjDir)%B.pdb
+
+: $(ObjDir)$(DotDiffCppSourceFiles).obj | $(ObjDir)$(DotDiffCppSourceFiles).pdb  |> link %1f $(DotDiffCppDebugExecutableLinkFlags) |> $(FinalBinDir)$(DotDiffCppOutputFilename).exe $(FinalBinDir)$(DotDiffCppOutputFilename).pdb $(FinalBinDir)$(DotDiffCppOutputFilename).ilk  
+

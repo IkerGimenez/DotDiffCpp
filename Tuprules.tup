@@ -1,0 +1,16 @@
+ROOT=$(TUP_CWD)
+# &ImGuiDir = libs/dearimgui
+# &MeowHashDir = libs/meowhash
+# &LibsDir = libs
+FinalBinDir = $(ROOT)/bin/
+ObjDir=$(ROOT)/temp/obj/
+
+CommonCompilerFlags += -c -nologo
+CommonCompilerFlags += -DWIN32_LEAN_AND_MEAN
+CommonCompilerFlags += -MP -Zi -Zf -GR-
+CommonCompilerFlags += -Fo"$(ObjDir)"
+
+CommonDebugCompilerFlags += -Od -fp:except
+CommonFinalCompilerFlags += -Gw -GL -GF -fp:fast -Zo -Oi -Ox -arch:avx2
+
+
