@@ -8,7 +8,6 @@
 @echo off
 
 set vsversionsList=(vs2022)
-set projectsList=(dotdiffcpp)
 set configsList=(debug final)
 
 IF "%1"=="clean" (
@@ -28,12 +27,10 @@ GOTO end
 :compile
 IF [%1]==[] GOTO help
 IF [%2]==[] GOTO help
-IF [%3]==[] GOTO help
 
 IF NOT EXIST .\bin mkdir .\bin
 IF NOT EXIST .\temp mkdir .\temp
 IF NOT EXIST .\temp\obj mkdir .\temp\obj
-
 
 FOR %%x in %vsversionsList% DO (
     if %%x==%1 GOTO FoundVsVersion
@@ -41,14 +38,8 @@ FOR %%x in %vsversionsList% DO (
 GOTO help
 
 :FoundVsVersion
-FOR %%x in %projectsList% DO (
-    if %%x==%2 GOTO FoundProject
-)
-GOTO help
-
-:FoundProject
 FOR %%x in %configsList% DO (
-    if %%x==%3 GOTO FoundConfig
+    if %%x==%2 GOTO FoundConfig
 )
 GOTO help
 
@@ -67,7 +58,6 @@ IF NOT DEFINED VCVARSALL_INIT (
 
 set BuildConfigName=
 set BuildConfigSuffix=
-set BuildProjectName="%2"
 
 if "%3"=="debug" (
     set BuildConfigName=Debug
@@ -84,14 +74,10 @@ GOTO :end
 :help
 echo Usage:
 echo build.bat clean - Cleans the temp directory and the bin directory
-echo build.bat [vs20XX] [project] [config] - Builds the selected project using the specified Visual Studio version and Configuration
-echo Example: build.bat vs2017 engine debug - This would build the engine project using Visual Studio 2017 in a debug configuration
+echo build.bat [vs20XX] config] - Builds the project using the specified Visual Studio version and Configuration
+echo Example: build.bat vs2022 debug - This would build the project using Visual Studio 2022 in a debug configuration
 echo Available VS Versions:
 FOR %%x in %vsversionsList% DO (
-    echo %%x
-)
-echo Available Projects:
-FOR %%x in %projectsList% DO (
     echo %%x
 )
 echo Available Configs:

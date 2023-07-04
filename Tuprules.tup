@@ -1,5 +1,5 @@
 ROOT=$(TUP_CWD)
-# &ImGuiDir = libs/dearimgui
+&ImGuiDir = extern/dearimgui
 # &MeowHashDir = libs/meowhash
 # &LibsDir = libs
 FinalBinDir = $(ROOT)/bin/
