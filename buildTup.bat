@@ -19,11 +19,12 @@ IF "%1"=="help" (
 GOTO :end
 
 :clean
-echo Cleaning temp folder...
-DEL /F /Q /S ".\\temp" > NUL
-echo Cleaning bin folder...
-DEL /F /Q /S ".\\bin" > NUL
-echo Done
+echo TODO(Iker^) - Update clean command
+:: echo Cleaning temp folder...
+:: DEL /F /Q /S ".\\temp" > NUL
+:: echo Cleaning bin folder...
+:: DEL /F /Q /S ".\\bin" > NUL
+:: echo Done
 EXIT /B
 
 :compile
@@ -99,9 +100,8 @@ GOTO :end
 
 :help
 echo Usage:
-echo build.bat clean - Cleans build artifacts
-echo build.bat [vsVersion] [config] - Builds the project targeting the specific configuration
-echo Example: build.bat 16 debug - This would build the project in a debug configuration using the Visual Studio 2019 tools
+echo buildTup.bat [vsVersion] [config] - Builds the project targeting the specific configuration
+echo Example: buildTup.bat 16 debug - This would build the project in a debug configuration using the Visual Studio 2019 tools
 echo:
 echo **************
 echo Compatible VS Versions:
