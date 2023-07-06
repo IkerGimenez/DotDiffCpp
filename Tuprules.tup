@@ -1,10 +1,7 @@
 ROOT=$(TUP_CWD)
 &ImGuiDir = extern/dearimgui
-# &MeowHashDir = libs/meowhash
-# &LibsDir = libs
 FinalBinDir=$(TUP_VARIANTDIR)/bin/
 ObjDir=$(TUP_VARIANTDIR)/temp/obj/
-&AltObjDir=temp/obj
 
 VariantSuffix = _@(VARIANT_NAME)
 VariantObjDir = build-@(VARIANT_NAME)/temp/obj

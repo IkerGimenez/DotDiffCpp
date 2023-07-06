@@ -1,7 +1,7 @@
 include_rules
 
-DotDiffCppLinkerArgs = user32.lib d3d11.lib dxgi.lib d3dcompiler.lib
-DotDiffCppExecutableLinkFlags = $(DotDiffCppLinkerArgs) /DEBUG -OUT:"$(FinalBinDir)$(DotDiffCppOutputFilename).exe"
+DotDiffCppLinkerArgs += user32.lib d3d11.lib dxgi.lib d3dcompiler.lib
+DotDiffCppLinkerArgs += /DEBUG -OUT:"$(FinalBinDir)$(DotDiffCppOutputFilename).exe"
 
 DotDiffCppLinkerOutputFiles = $(FinalBinDir)$(DotDiffCppOutputFilename).exe $(FinalBinDir)$(DotDiffCppOutputFilename).pdb
 
@@ -9,4 +9,4 @@ ifeq (@(VARIANT_NAME),debug)
     DotDiffCppLinkerOutputFiles += $(FinalBinDir)$(DotDiffCppOutputFilename).ilk
 endif
 
-: <dotdiffcppresponse> <dearimguiresponse> <dearimguibackendsresponse> | <dotdiffcpp> <dearimgui> |> link /LIBPATH:$(ObjDir) @%<dotdiffcppresponse> @%<dearimguiresponse> @%<dearimguibackendsresponse> $(DotDiffCppExecutableLinkFlags) |> $(DotDiffCppLinkerOutputFiles)
+: <dotdiffcppresponse> <dearimguiresponse> <dearimguibackendsresponse> | <dotdiffcpp> <dearimgui> |> link /LIBPATH:$(ObjDir) @%<dotdiffcppresponse> @%<dearimguiresponse> @%<dearimguibackendsresponse> $(DotDiffCppLinkerArgs) |> $(DotDiffCppLinkerOutputFiles)

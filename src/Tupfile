@@ -1,10 +1,5 @@
 include_rules
 
-#BuildConfigName = @(VARIANT_NAME)
-#BuildConfigSuffix = @(VARIANT_SUFFIX)
-
-RelativeImGuiDir = &(ImGuiDir)
-
 # Internal Common Base Compiler Flags
 # CommonCompilerFlags += -wd4820 -wd4191 -wd5045 -wd4668 
 CommonCompilerFlags += -Qspectre -permissive-
@@ -12,15 +7,11 @@ CommonCompilerFlags += -external:W0 -I "../include" -external:I "../extern" -ext
 CommonCompilerFlags += -W4 -WX
 
 # DotDiffCpp
-DotDiffCppSourceFiles    = main.cpp
-
-# Linker Args
-DotDiffCppLinkerArgs = user32.lib d3d11.lib dxgi.lib d3dcompiler.lib
+DotDiffCppSourceFiles = main.cpp
 
 # Final compiler flag collection
 DotDiffCppCompilerFlags = $(CommonCompilerFlags) @(VARIANT_FLAGS)
 
 # Build rules
-
 : foreach $(DotDiffCppSourceFiles) |> !CompileCppFiles |> $(ObjDir)%B$(VariantSuffix).obj $(ObjDir)%B$(VariantSuffix).pdb $(ROOT)/<dotdiffcpp>
 : $(ObjDir)/*.obj |> echo %b > %o |> $(ROOT)/dotdiffresponse.txt $(ROOT)/<dotdiffcppresponse>
