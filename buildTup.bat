@@ -4,17 +4,19 @@
 
 :: Build specific variables
 
-
 @echo off
 
-set vsversionsList=(vs2022)
-set configsList=(debug final)
+set configsList=(debug final all)
+set vsVersionsList=(16 17)
 
-IF "%1"=="clean" (
-   GOTO clean
+IF "%1"=="help" (
+    GOTO :help
+) ELSE IF "%1"=="clean" (
+    GOTO :clean
 ) ELSE (
-   GOTO compile
+    GOTO :compile
 )
+GOTO :end
 
 :clean
 echo Cleaning temp folder...
@@ -22,68 +24,105 @@ DEL /F /Q /S ".\\temp" > NUL
 echo Cleaning bin folder...
 DEL /F /Q /S ".\\bin" > NUL
 echo Done
-GOTO end
+EXIT /B
 
 :compile
 IF [%1]==[] GOTO help
 IF [%2]==[] GOTO help
 
+echo Compiling with args %1 %2 ...
 IF NOT EXIST .\bin mkdir .\bin
 IF NOT EXIST .\temp mkdir .\temp
 IF NOT EXIST .\temp\obj mkdir .\temp\obj
+IF EXIST .\.tup\tmp (
+    DEL /F /Q /S ".\\.tup\\tmp"
+    rmdir ".\\.tup\\tmp"
+)
 
 FOR %%x in %vsversionsList% DO (
-    if %%x==%1 GOTO FoundVsVersion
+    if %%x==%1 GOTO :FoundVsVersion
 )
 GOTO help
 
 :FoundVsVersion
 FOR %%x in %configsList% DO (
-    if %%x==%2 GOTO FoundConfig
+    if %%x==%2 GOTO :FoundConfig
 )
 GOTO help
 
 :FoundConfig
-set vsFolder=
-IF %1==vs2022 set vsFolder="2022"
-IF [%vsFolder%]==[] GOTO help
 
-:: Initialize development environment only once, otherwise we pollute the PATH variable on subsequent calls to the batch file
-IF NOT DEFINED VCVARSALL_INIT (
- call "C:\\Program Files\\Microsoft Visual Studio\\%vsFolder%\\Community\\VC\\Auxiliary\\Build\\vcvarsall.bat" x64
- set VCVARSALL_INIT=1
- )
-
- :: Set environment variables for Tup to use later on
-
-set BuildConfigName=
-set BuildConfigSuffix=
-
-if "%3"=="debug" (
-    set BuildConfigName=Debug
-    set BuildConfigSuffix=_debug
+:: setlocal EnableDelayedExpansion
+set vsDir=
+set /a maxVersion=%1 + 1
+echo Verson string is [%1,%maxVersion%)
+echo Searching for appropriate Visual Studio installation location...
+for /f "usebackq tokens=*" %%i in (`vswhere -version [%1^,%maxVersion%^) -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+    set vsDir=%%i
 )
 
-:: Call tup to build
-echo Building with tup
-echo tup
-.\tup\tup.exe --debug-run
+echo Found %vsDir%
 
+if exist %vsDir%\VC\Auxiliary\Build\vcvarsall.bat (
+    echo Using %vsDir%\VC\Auxiliary\Build\vcvarsall.bat
+
+    :: Initialize development environment only once, otherwise we pollute the PATH variable on subsequent calls to the batch file
+    IF NOT DEFINED VCVARSALL_INIT (
+        echo "%vsDir%"\VC\Auxiliary\Build\vcvarsall.bat x64
+        call "%vsDir%\VC\Auxiliary\Build\vcvarsall.bat" x64
+        set VCVARSALL_INIT=1
+    )
+
+    GOTO :Build
+)
+echo vcvarsall.bat not found. Unable to initialize Visual Studio dev console.
+echo Check to make sure you have a valid installation of the C++ build tools.
+echo Use the help command to print a valid list of versions.
+GOTO :end
+
+:: Initialize development environment only once, otherwise we pollute the PATH variable on subsequent calls to the batch file
+
+:: Set environment variables for Tup to use later on
+
+:: Call tup to build
+:Build
+echo Building with tup
+
+IF ["%2"]==["all"] (
+    echo .\tup\tup.exe
+    .\tup\tup.exe
+) ELSE (
+    echo .\tup\tup.exe build-%2
+    .\tup\tup.exe build-%2
+)
 GOTO :end
 
 :help
 echo Usage:
-echo build.bat clean - Cleans the temp directory and the bin directory
-echo build.bat [vs20XX] config] - Builds the project using the specified Visual Studio version and Configuration
-echo Example: build.bat vs2022 debug - This would build the project using Visual Studio 2022 in a debug configuration
-echo Available VS Versions:
-FOR %%x in %vsversionsList% DO (
+echo build.bat clean - Cleans build artifacts
+echo build.bat [vsVersion] [config] - Builds the project targeting the specific configuration
+echo Example: build.bat 16 debug - This would build the project in a debug configuration using the Visual Studio 2019 tools
+echo:
+echo **************
+echo Compatible VS Versions:
+FOR %%x in %vsVersionsList% DO (
     echo %%x
 )
+echo:
+echo VS Versions key:
+echo Visual Studio 2019 == 16
+echo Visual Studio 2022 == 17
+echo **************
 echo Available Configs:
 FOR %%x in %configsList% DO (
     echo %%x
 )
+echo:
+echo Configs key:
+echo debug - Unoptimized for development and debugging
+echo final - Optimized for distribution
+echo all - Build all available configurations
+echo:
 
 :end
 PAUSE
