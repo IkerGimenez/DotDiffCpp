@@ -1,43 +1,26 @@
 include_rules
 
-import VK_SDK_PATH
-import BuildConfigName=Unknown
-import BuildConfigSuffix=_none
+#BuildConfigName = @(VARIANT_NAME)
+#BuildConfigSuffix = @(VARIANT_SUFFIX)
+
+RelativeImGuiDir = &(ImGuiDir)
 
 # Internal Common Base Compiler Flags
-CommonCompilerFlags += -wd4820 -wd4191 -wd5045 -wd4668 -Qspectre -permissive-
-CommonCompilerFlags += -external:W0 -external:I "$(VK_SDK_PATH)/Include" -I "../include" -external:I "../extern" -external:I "&(ImGuiDir)" 
+# CommonCompilerFlags += -wd4820 -wd4191 -wd5045 -wd4668 
+CommonCompilerFlags += -Qspectre -permissive-
+CommonCompilerFlags += -external:W0 -I "../include" -external:I "../extern" -external:I "&(ImGuiDir)" 
 CommonCompilerFlags += -W4 -WX
 
 # DotDiffCpp
-DotDiffCppOutputFilename = dotdiffcpp$(BuildConfigSuffix)
-DotDiffCppSourceFiles    = main
-DearImGuiCppSourceFiles  = &(ImGuiDir)/imgui.cpp &(ImGuiDir)/imgui_demo.cpp &(ImGuiDir)/imgui_draw.cpp &(ImGuiDir)/imgui_tables.cpp &(ImGuiDir)/imgui_widgets.cpp
-DearImGuiBackendCppSourceFiles = &(ImGuiDir)/backends/imgui_impl_win32.cpp &(ImGuiDir)/backends/imgui_impl_dx11.cpp
+DotDiffCppSourceFiles    = main.cpp
 
 # Linker Args
-DotDiffCppLinkerArgs         = user32.lib d3d11.lib dxgi.lib d3dcompiler.lib
+DotDiffCppLinkerArgs = user32.lib d3d11.lib dxgi.lib d3dcompiler.lib
 
-# Module specific compiler flags
-DotDiffCppCompilerFlags   = 
-#GraphicsCompilerFlags = -DVK_USE_PLATFORM_WIN32_KHR -DGRAPHICS_DLL_EXPORT -DDEFINE_GRAPHICS_HELPERS -DCONFIG_USE_IMGUI 
-
-# Configuration specific compiler flags
-CommonDebugCompilerFlags += -DCONFIG_DEBUG -MDd
-CommonFinalCompilerFlags += -DCONFIG_FINAL -MD
-
-# Final flag collection per module
-# Engine
-DotDiffCppDebugExecutableFlags     = $(DotDiffCppCompilerFlags) $(CommonLinkerFlags)
-DotDiffCppDebugExecutableLinkFlags = $(DotDiffCppLinkerArgs) /DEBUG -OUT:"$(FinalBinDir)$(DotDiffCppOutputFilename).exe"
+# Final compiler flag collection
+DotDiffCppCompilerFlags = $(CommonCompilerFlags) @(VARIANT_FLAGS)
 
 # Build rules
 
-: $(DotDiffCppSourceFiles).cpp |> cl %f $(CommonCompilerFlags) -Fd%2o -Fe"%o" $(DotDiffCppDebugExecutableFlags) |> $(ObjDir)%B.obj $(ObjDir)%B.pdb 
-
-: foreach $(DearImGuiCppSourceFiles) |> cl %f $(CommonCompilerFlags) -Fd%2o -Fe"%o" $(DotDiffCppDebugExecutableFlags) |> $(ObjDir)%B.obj $(ObjDir)%B.pdb <dearimgui>
-
-: foreach $(DearImGuiBackendCppSourceFiles) |> cl %f $(CommonCompilerFlags) -Fd%2o -Fe"%o" $(DotDiffCppDebugExecutableFlags) |> $(ObjDir)%B.obj $(ObjDir)%B.pdb <dearimgui>
-
-: $(ObjDir)*.obj  | $(ObjDir)$(DotDiffCppSourceFiles).pdb <dearimgui> |> link %f $(DotDiffCppDebugExecutableLinkFlags) |> $(FinalBinDir)$(DotDiffCppOutputFilename).exe $(FinalBinDir)$(DotDiffCppOutputFilename).pdb $(FinalBinDir)$(DotDiffCppOutputFilename).ilk  
-
+: foreach $(DotDiffCppSourceFiles) |> !CompileCppFiles |> $(ObjDir)%B$(VariantSuffix).obj $(ObjDir)%B$(VariantSuffix).pdb $(ROOT)/<dotdiffcpp>
+: $(ObjDir)/*.obj |> echo %b > %o |> $(ROOT)/dotdiffresponse.txt $(ROOT)/<dotdiffcppresponse>

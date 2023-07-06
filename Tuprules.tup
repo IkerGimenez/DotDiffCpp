@@ -2,15 +2,18 @@ ROOT=$(TUP_CWD)
 &ImGuiDir = extern/dearimgui
 # &MeowHashDir = libs/meowhash
 # &LibsDir = libs
-FinalBinDir = $(ROOT)/bin/
-ObjDir=$(ROOT)/temp/obj/
+FinalBinDir=$(TUP_VARIANTDIR)/bin/
+ObjDir=$(TUP_VARIANTDIR)/temp/obj/
+&AltObjDir=temp/obj
+
+VariantSuffix = _@(VARIANT_NAME)
+VariantObjDir = build-@(VARIANT_NAME)/temp/obj
+
+DotDiffCppOutputFilename = dotdiffcpp_@(VARIANT_NAME)
 
 CommonCompilerFlags += -c -nologo
 CommonCompilerFlags += -DWIN32_LEAN_AND_MEAN
 CommonCompilerFlags += -MP -Zi -Zf -GR-
-CommonCompilerFlags += -Fo"$(ObjDir)"
 
-CommonDebugCompilerFlags += -Od -fp:except
-CommonFinalCompilerFlags += -Gw -GL -GF -fp:fast -Zo -Oi -Ox -arch:avx2
-
+!CompileCppFiles = |> cl %f $(CommonCompilerFlags) -Fd%2o -Fo"$(ObjDir)%B$(VariantSuffix)" $(DotDiffCppCompilerFlags) |>
 

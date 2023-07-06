@@ -1,3 +1,12 @@
-#include_rules
+include_rules
 
-#: foreach $(DearImGuiCppSourceFiles).cpp |> cl %f $(CommonCompilerFlags) -Fd%2o -Fe"%o" $(DotDiffCppDebugExecutableFlags) |> $(ObjDir)%B.obj $(ObjDir)%B.pdb
+DotDiffCppLinkerArgs = user32.lib d3d11.lib dxgi.lib d3dcompiler.lib
+DotDiffCppExecutableLinkFlags = $(DotDiffCppLinkerArgs) /DEBUG -OUT:"$(FinalBinDir)$(DotDiffCppOutputFilename).exe"
+
+DotDiffCppLinkerOutputFiles = $(FinalBinDir)$(DotDiffCppOutputFilename).exe $(FinalBinDir)$(DotDiffCppOutputFilename).pdb
+
+ifeq (@(VARIANT_NAME),debug)
+    DotDiffCppLinkerOutputFiles += $(FinalBinDir)$(DotDiffCppOutputFilename).ilk
+endif
+
+: <dotdiffcppresponse> <dearimguiresponse> <dearimguibackendsresponse> | <dotdiffcpp> <dearimgui> |> link /LIBPATH:$(ObjDir) @%<dotdiffcppresponse> @%<dearimguiresponse> @%<dearimguibackendsresponse> $(DotDiffCppExecutableLinkFlags) |> $(DotDiffCppLinkerOutputFiles)
