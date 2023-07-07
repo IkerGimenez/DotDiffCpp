@@ -85,7 +85,7 @@ int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*
     // Our state
     bool show_demo_window = true;
     bool show_another_window = false;
-    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.0f, 1.00f);
 
     ShowWindow(windowHandle, nShowCmd);
     UpdateWindow(windowHandle);
@@ -166,7 +166,7 @@ int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
         // Present swap chain
-        g_pSwapChain->Present(0, 1); // Present with vsync
+        g_pSwapChain->Present(1, 0); // Present with vsync
 
         // QPC Update
         QueryPerformanceCounter(&frameEnd);
