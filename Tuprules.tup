@@ -8,9 +8,9 @@ VariantObjDir = build-@(VARIANT_NAME)/temp/obj
 
 DotDiffCppOutputFilename = dotdiffcpp_@(VARIANT_NAME)
 
-CommonCompilerFlags += -c -nologo
-CommonCompilerFlags += -DWIN32_LEAN_AND_MEAN
-CommonCompilerFlags += -MP -Zi -Zf -GR-
+CommonCompilerFlags += -c -nologo -std:c++latest
+CommonCompilerFlags += -DWIN32_LEAN_AND_MEAN -DUNICODE -D_UNICODE
+CommonCompilerFlags += -MP -Zi -Zf -GR- -EHsc
 
-!CompileCppFiles = |> cl %f $(CommonCompilerFlags) -Fd%2o -Fo"$(ObjDir)%B$(VariantSuffix)" $(DotDiffCppCompilerFlags) |>
+!CompileCppFiles = |> ^j^ cl %f $(CommonCompilerFlags) -Fd%2o -Fo"$(ObjDir)%B$(VariantSuffix)" $(DotDiffCppCompilerFlags) |>
 

@@ -5,6 +5,14 @@
 #include <Windows.h>
 #include <d3d11.h>
 #include <directxmath.h>
+#include <mfidl.h>
+#include <Mfapi.h>
+#include <Mfreadwrite.h>
+#include <Shlwapi.h>
+
+#include <vector>
+#include <string>
+#include <winnt.h>
 
 #define DEFAULT_CLIENT_WIDTH 1280
 #define DEFAULT_CLIENT_HEIGHT 720
@@ -25,14 +33,91 @@ void CreateRenderTarget();
 void CleanupRenderTarget();
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-// Win32 helpers
+// Win32 Functions
 void ProcessWindowMessages(bool& quitReceived, int& exitCode);
 LRESULT WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+
+
+// Copied from MSDN documentation
+template <class T> void SafeRelease(T **ppT)
+{
+    if (*ppT)
+    {
+        (*ppT)->Release();
+        *ppT = nullptr;
+    }
+}
+
+// DotDiffCpp Functions
+HRESULT EnumerateVideoCaptureDevices(IMFAttributes ** ppAttributes, IMFActivate *** pppDevices, UINT32 & numDevices);
+HRESULT AttributeGetString(IMFAttributes *pAttributes, REFGUID guidKey, WCHAR *& outString, UINT32 & outStrLen);
+HRESULT CreateMediaSourceObject(IMFActivate ** ppDevices, IMFMediaSource ** ppSource);
+
+#define CLEAN_ATTRIBUTES() \
+    if (attributes) \
+    { \
+        attributes->Release(); \
+        attributes = NULL; \
+    } \
+    for (DWORD i = 0; i < count; i++) \
+    { \
+        if (&devices[i]) \
+        { \
+            devices[i]->Release(); \
+            devices[i] = NULL; \
+        } \
+    } \
+    CoTaskMemFree(devices); \
+    return hr;
+
+bool ConvertWideStringToNarrow(wchar_t * wideString, const UINT32 wideStringLen, char * destString, const UINT32 destSize);                                                               
+
+// VideoCaptureDevice
+//specialized class
+class VideoCaptureDevice: public IMFSourceReaderCallback
+{
+    CRITICAL_SECTION m_CriticalSection;
+    long m_ReferenceCount;
+    WCHAR * m_wSymbolicLink;
+    UINT32 m_SymbolicLinkLen;
+    IMFSourceReader * m_SourceReader;
+
+public:
+    LONG m_Stride;
+    int m_BytesPerPixel;
+    GUID m_VideoFormat;
+    UINT m_Height;
+    UINT m_Width;
+    WCHAR deviceNameString[2048];
+    BYTE * rawData;
+
+    HRESULT CreateCaptureDevice(void);
+    HRESULT SetSourceReader(IMFActivate * device);
+    HRESULT IsMediaTypeSupported(IMFMediaType * type);
+    HRESULT GetDefaultStride(IMFMediaType * pType, LONG * plStride);
+    HRESULT Close();
+    VideoCaptureDevice();
+    ~VideoCaptureDevice();
+
+    // the class must implement the methods from IUnknown
+    STDMETHODIMP QueryInterface(REFIID iid, void** ppv);
+    STDMETHODIMP_(ULONG) AddRef();
+    STDMETHODIMP_(ULONG) Release();
+ 
+    //  the class must implement the methods from IMFSourceReaderCallback
+    STDMETHODIMP OnReadSample(HRESULT status, DWORD streamIndex, DWORD streamFlags, LONGLONG timeStamp, IMFSample *sample);
+    STDMETHODIMP OnEvent(DWORD, IMFMediaEvent *);
+    STDMETHODIMP OnFlush(DWORD);
+};
+
+
 
 // Program entrypoint
 int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*/, int nShowCmd)
 {
-    const char dotDiffCppWindowClassName[] = "DotDiffCpp Window Class";
+    const wchar_t dotDiffCppWindowClassName[] = L"DotDiffCpp Window Class";
+    const wchar_t dotDiffCppWindowTitle[] = L"DotDiffCpp";
 
     WNDCLASSEX windowClass = {};
 
@@ -47,7 +132,7 @@ int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*
     RECT desiredClientRect { 0, 0, DEFAULT_CLIENT_WIDTH, DEFAULT_CLIENT_HEIGHT };
     AdjustWindowRect(&desiredClientRect, WS_OVERLAPPEDWINDOW, FALSE);
 
-    HWND windowHandle = CreateWindowEx(0, dotDiffCppWindowClassName, "DotDiffCpp", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, desiredClientRect.right - desiredClientRect.left, desiredClientRect.bottom - desiredClientRect.top, nullptr, nullptr, hInstance, nullptr);
+    HWND windowHandle = CreateWindowExW(0, dotDiffCppWindowClassName, dotDiffCppWindowTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, desiredClientRect.right - desiredClientRect.left, desiredClientRect.bottom - desiredClientRect.top, nullptr, nullptr, hInstance, nullptr);
 
     if(windowHandle == nullptr)
     {
@@ -82,9 +167,21 @@ int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*
     float framesPerSecond = 0.0f;
     float deltaTime = 0.016f;
 
+    bool showNewCaptureSessionWindow = false;
+    
+    // Video capture devices
+    IMFAttributes * pAttributes = nullptr;
+    IMFActivate ** ppDevices = nullptr;
+    UINT32 numDevices = 0;
+    WCHAR * deviceName = nullptr;
+    UINT32 deviceNameLen;
+    UINT32 selectedDeviceIdx = 0;
+    IMFMediaSource * pDeviceSource = nullptr;
+
+    std::vector<std::string> videoCaptureDeviceNames;
+
     // Our state
     bool show_demo_window = true;
-    bool show_another_window = false;
     ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.0f, 1.00f);
 
     ShowWindow(windowHandle, nShowCmd);
@@ -105,7 +202,6 @@ int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*
     ImGui_ImplWin32_Init(windowHandle);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-
     ProcessWindowMessages(quit, exitCode);
 
     while(quit == false)
@@ -117,41 +213,119 @@ int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
+
         // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
         if (show_demo_window)
+        {
             ImGui::ShowDemoWindow(&show_demo_window);
+        }
 
-        // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
+        // Main menu bar 
         {
             static float f = 0.0f;
             static int counter = 0;
 
-            ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
-
-            ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-            ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-            ImGui::Checkbox("Another Window", &show_another_window);
-
-            ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-            ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-
-            if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-                counter++;
-            ImGui::SameLine();
-            ImGui::Text("counter = %d", counter);
-
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-            ImGui::End();
+            if(ImGui::BeginMainMenuBar())
+            {
+                if(ImGui::BeginMenu("File"))
+                {
+                    ImGui::MenuItem("(Test Menu)", nullptr, false, false);
+                    if(ImGui::MenuItem("Start new capture session")) 
+                    {
+                        showNewCaptureSessionWindow = true;
+                    }
+                    ImGui::Separator();
+                    if(ImGui::MenuItem("Quit", "Alt+F4")) {}
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMainMenuBar();
+            }
         }
 
-        // 3. Show another simple window.
-        if (show_another_window)
+        // New capture session window
         {
-            ImGui::Begin("Another Window", &show_another_window);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-            ImGui::Text("Hello from another window!");
-            if (ImGui::Button("Close Me"))
-                show_another_window = false;
-            ImGui::End();
+            if(showNewCaptureSessionWindow)
+            {
+                ImGui::Begin("New session configuration", &showNewCaptureSessionWindow);
+                if (numDevices == 0)
+                {
+                    EnumerateVideoCaptureDevices(&pAttributes, &ppDevices, numDevices);
+                }
+
+                if (numDevices > 0)
+                {
+                    if (videoCaptureDeviceNames.empty())
+                    {
+                        videoCaptureDeviceNames.emplace_back("No device selected");
+                        for (UINT32 deviceIdx = 0; deviceIdx < numDevices; ++deviceIdx)
+                        {
+                            AttributeGetString(ppDevices[deviceIdx], MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, deviceName, deviceNameLen);
+                            std::string& currDeviceNarrowName = videoCaptureDeviceNames.emplace_back();
+                            currDeviceNarrowName.resize(deviceNameLen * 3); // Worst case for UTF-16 to UTF-8 conversion, the string needs 3 times the length
+
+                            bool conversionSuccess = ConvertWideStringToNarrow(deviceName, deviceNameLen, currDeviceNarrowName.data(), deviceNameLen * 3);
+                            if (!conversionSuccess)
+                            {
+                                currDeviceNarrowName = "Error converting device name to UTF-8 from UTF-16";
+                            }
+                        }
+                    }
+
+                    const char * comboPreviewValue = videoCaptureDeviceNames[selectedDeviceIdx].c_str();
+                    if(ImGui::BeginCombo("Video Capture Device", comboPreviewValue))
+                    {
+                        for (UINT32 deviceIdx = 0 ; deviceIdx < (UINT32)videoCaptureDeviceNames.size() ; ++deviceIdx)
+                        {
+                            const bool isSelected = (selectedDeviceIdx == deviceIdx);
+                            if(ImGui::Selectable(videoCaptureDeviceNames[deviceIdx].c_str(), isSelected))
+                            {
+                                selectedDeviceIdx = deviceIdx;
+                            }
+
+                            if(isSelected)
+                            {
+                                ImGui::SetItemDefaultFocus();
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+
+                }
+                else
+                {
+                    ImGui::Text("No compatible video capture devices detected. Make sure your device is properly connected and that it is recognized as a video capture device by Windows.");
+                }
+
+                const bool noCompatibleDevices = videoCaptureDeviceNames.size() == 1;
+                const bool noValidDeviceSelected = selectedDeviceIdx == 0;
+                ImGui::BeginDisabled(noCompatibleDevices || noValidDeviceSelected); // Disable start session button if no compatible devices detected
+                if(ImGui::Button("Start Session"))
+                {
+                    showNewCaptureSessionWindow = false;
+                    CreateMediaSourceObject(ppDevices, &pDeviceSource);
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if(ImGui::Button("Detect New Devices"))
+                {
+                    numDevices = 0;
+                }
+                ImGui::End();
+            }
+        }
+
+        {
+            if(pDeviceSource != nullptr)
+            {
+                HRESULT hResult = S_OK;
+                IMFAttributes * pSourceReaderAttributes = nullptr;
+
+                hResult = MFCreateAttributes(&pSourceReaderAttributes, 1);
+                if(SUCCEEDED(hResult))
+                {
+                    //hResult = pSourceReaderAttributes->SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK, 
+                }
+            }
         }
 
         // Rendering
@@ -296,4 +470,381 @@ void CleanupRenderTarget()
     if (g_mainRenderTargetView) { g_mainRenderTargetView->Release(); g_mainRenderTargetView = nullptr; }
 }
 
+HRESULT EnumerateVideoCaptureDevices(IMFAttributes ** ppAttributes, IMFActivate *** pppDevices, UINT32 & numDevices)
+{
+    const UINT32 cElements = 1;
 
+    HRESULT hResult = MFCreateAttributes(ppAttributes, cElements);
+    if(SUCCEEDED(hResult))
+    {
+        hResult = (*ppAttributes)->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
+
+        if(SUCCEEDED(hResult))
+        {
+            hResult = MFEnumDeviceSources(*ppAttributes, pppDevices, &numDevices); 
+        }
+    }
+
+    return hResult;
+}
+
+HRESULT AttributeGetString(IMFAttributes *pAttributes, REFGUID guidKey, WCHAR *& outString, UINT32 & outStrLen)
+{
+    HRESULT hResult = S_OK;
+
+    hResult = pAttributes->GetStringLength(guidKey, &outStrLen);
+    
+    if (SUCCEEDED(hResult))
+    {
+        outString = new WCHAR[outStrLen + 1];
+        if (outString == NULL)
+        {
+            hResult = E_OUTOFMEMORY;
+        }
+        ZeroMemory(outString, outStrLen + 1); 
+    }
+
+    if (SUCCEEDED(hResult))
+    {
+        hResult = pAttributes->GetString(guidKey, outString, outStrLen + 1, &outStrLen);
+    }
+
+    return hResult;
+}
+
+HRESULT CreateMediaSourceObject(IMFActivate ** ppDevices, IMFMediaSource ** ppSource)
+{
+    IMFMediaSource * pSource = nullptr;
+    HRESULT hResult = ppDevices[0]->ActivateObject(IID_PPV_ARGS(&pSource));
+
+    if(SUCCEEDED(hResult))
+    {
+        *ppSource = pSource;
+        (*ppSource)->AddRef();
+    }
+
+    return hResult;
+}
+
+bool ConvertWideStringToNarrow(wchar_t * wideString, const UINT32 wideStringLen, char * destString, const UINT32 destSize)
+{
+    int result = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wideString, (int)wideStringLen, destString, destSize, NULL, NULL);
+
+    // 0 means no characters were written to the destination string
+    return (result != 0);
+}
+
+VideoCaptureDevice::VideoCaptureDevice()
+{
+	InitializeCriticalSection(&m_CriticalSection);
+	m_ReferenceCount = 1;
+	m_wSymbolicLink = NULL;
+	m_SymbolicLinkLen = 0;
+	m_Width = 0;
+	m_Height = 0;
+	m_SourceReader = NULL;
+	rawData = NULL;
+	
+}
+
+VideoCaptureDevice::~VideoCaptureDevice()
+{
+	
+	if (m_wSymbolicLink)
+	{	
+		delete m_wSymbolicLink;
+		m_wSymbolicLink = NULL;
+	}
+	EnterCriticalSection(&m_CriticalSection);
+
+	if (m_SourceReader)
+	{
+		m_SourceReader->Release();
+		m_SourceReader = NULL;
+	}
+
+	
+	if (rawData)
+	{
+		delete rawData;
+		rawData = NULL;
+	}
+
+	CoTaskMemFree(m_wSymbolicLink);
+	m_wSymbolicLink = NULL;
+	m_SymbolicLinkLen = 0;
+
+	LeaveCriticalSection(&m_CriticalSection);
+	DeleteCriticalSection(&m_CriticalSection);
+}
+
+HRESULT VideoCaptureDevice::CreateCaptureDevice()
+{
+	HRESULT hr = S_OK;
+	
+	//this is important!!
+	hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+	UINT32 count = 0;
+	IMFAttributes *attributes = NULL;
+	IMFActivate **devices = NULL;
+
+	if (FAILED(hr)) { CLEAN_ATTRIBUTES() }
+	// Create an attribute store to specify enumeration parameters.
+	hr = MFCreateAttributes(&attributes, 1);
+
+	if (FAILED(hr)) { CLEAN_ATTRIBUTES() }
+
+	//The attribute to be requested is devices that can capture video
+	hr = attributes->SetGUID(
+		MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+		MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID
+	);
+	if (FAILED(hr)) { CLEAN_ATTRIBUTES() }
+	//Enummerate the video capture devices
+	hr = MFEnumDeviceSources(attributes, &devices, &count);
+	
+	if (FAILED(hr)) { CLEAN_ATTRIBUTES() }
+	//if there are any available devices
+	if (count > 0)
+	{
+		/*If you actually need to select one of the available devices
+		this is the place to do it. For this example the first device
+		is selected
+		*/
+		//Get a source reader from the first available device
+		SetSourceReader(devices[0]);
+		
+		WCHAR *nameString = NULL;
+		// Get the human-friendly name of the device
+		UINT32 cchName;
+		hr = devices[0]->GetAllocatedString(
+			MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
+			&nameString, &cchName);
+
+		if (SUCCEEDED(hr))
+		{
+			//allocate a byte buffer for the raw pixel data
+			m_BytesPerPixel = abs(m_Stride) / m_Width;
+			rawData = new BYTE[m_Width*m_Height * m_BytesPerPixel];
+			wcscpy_s(deviceNameString, ARRAYSIZE(deviceNameString), nameString); 
+		}
+		CoTaskMemFree(nameString);
+	}
+
+	//clean
+	CLEAN_ATTRIBUTES()
+}
+
+
+HRESULT VideoCaptureDevice::SetSourceReader(IMFActivate *device)
+{
+	HRESULT hr = S_OK;
+
+	IMFMediaSource *source = NULL;
+	IMFAttributes *attributes = NULL;
+	IMFMediaType *mediaType = NULL;
+
+	EnterCriticalSection(&m_CriticalSection);
+
+	hr = device->ActivateObject(__uuidof(IMFMediaSource), (void**)&source);
+
+	//get symbolic link for the device
+	if(SUCCEEDED(hr))
+		hr = device->GetAllocatedString(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, &m_wSymbolicLink, &m_SymbolicLinkLen);
+	//Allocate attributes
+	if (SUCCEEDED(hr))
+		hr = MFCreateAttributes(&attributes, 2);
+	//get attributes
+	if (SUCCEEDED(hr))
+		hr = attributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE);
+	// Set the callback pointer.
+	if (SUCCEEDED(hr))
+		hr = attributes->SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK,this);
+	//Create the source reader
+	if (SUCCEEDED(hr))
+		hr = MFCreateSourceReaderFromMediaSource(source,attributes,&m_SourceReader);
+	// Try to find a suitable output type.
+	if (SUCCEEDED(hr))
+	{
+		for (DWORD i = 0; ; i++)
+		{
+			hr = m_SourceReader->GetNativeMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM,i,&mediaType);
+			if (FAILED(hr)) { break; }
+			
+			hr = IsMediaTypeSupported(mediaType);
+			if (FAILED(hr)) { break; }
+			//Get width and height
+			MFGetAttributeSize(mediaType, MF_MT_FRAME_SIZE, &m_Width, &m_Height);
+			if (mediaType) 
+			{ mediaType->Release(); mediaType = NULL; }
+
+			if (SUCCEEDED(hr))// Found an output type.
+				break;
+		}
+	}
+	if (SUCCEEDED(hr))
+	{
+		// Ask for the first sample.
+		hr = m_SourceReader->ReadSample((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM,	0, NULL, NULL,NULL,NULL);
+	}
+
+	if (FAILED(hr))
+	{
+		if (source)
+		{
+			source->Shutdown();	
+		}
+		Close();
+	}
+	if (source) { source->Release(); source = NULL; }
+	if (attributes) { attributes->Release(); attributes = NULL; }
+	if (mediaType) { mediaType->Release(); mediaType = NULL; }
+
+	LeaveCriticalSection(&m_CriticalSection);
+	return hr;
+}
+
+HRESULT VideoCaptureDevice::IsMediaTypeSupported(IMFMediaType *pType)
+{
+	HRESULT hr = S_OK;
+
+	//BOOL bFound = FALSE;
+	GUID subtype = { 0 };
+
+	//Get the stride for this format so we can calculate the number of bytes per pixel
+	GetDefaultStride(pType, &m_Stride);
+
+	if (FAILED(hr)) { return hr; }
+	hr = pType->GetGUID(MF_MT_SUBTYPE, &subtype);
+
+	m_VideoFormat = subtype;
+
+	if (FAILED(hr))	{return hr;	}
+
+	if (subtype == MFVideoFormat_RGB32 || subtype == MFVideoFormat_RGB24 || subtype == MFVideoFormat_YUY2 || subtype == MFVideoFormat_NV12)
+		return S_OK;
+	else
+		return S_FALSE;
+}
+
+HRESULT VideoCaptureDevice::Close()
+{
+	EnterCriticalSection(&m_CriticalSection);
+	if(m_SourceReader)
+	{
+        m_SourceReader->Release(); 
+        m_SourceReader = NULL;
+    }
+
+	CoTaskMemFree(m_wSymbolicLink);
+	m_wSymbolicLink = NULL;
+	m_SymbolicLinkLen = 0;
+
+	LeaveCriticalSection(&m_CriticalSection);
+	return S_OK;
+}
+
+//From IUnknown 
+STDMETHODIMP VideoCaptureDevice::QueryInterface(REFIID riid, void** ppvObject)
+{
+	static const QITAB qit[] = {QITABENT(VideoCaptureDevice
+        , IMFSourceReaderCallback),{ 0 },};
+	return QISearch(this, qit, riid, ppvObject);
+}
+//From IUnknown
+ULONG VideoCaptureDevice::Release()
+{
+	ULONG count = InterlockedDecrement(&m_ReferenceCount);
+	if (count == 0)
+		delete this;
+	// For thread safety
+	return count;
+}
+//From IUnknown
+ULONG VideoCaptureDevice::AddRef()
+{
+	return InterlockedIncrement(&m_ReferenceCount);
+}
+
+
+//Calculates the default stride based on the format and size of the frames
+HRESULT VideoCaptureDevice::GetDefaultStride(IMFMediaType *type, LONG *stride)
+{
+	LONG tempStride = 0;
+
+	// Try to get the default stride from the media type.
+	HRESULT hr = type->GetUINT32(MF_MT_DEFAULT_STRIDE, (UINT32*)&tempStride);
+	if (FAILED(hr))
+	{
+		//Setting this atribute to NULL we can obtain the default stride
+		GUID subtype = GUID_NULL;
+
+		UINT32 width = 0;
+		UINT32 height = 0;
+
+		// Obtain the subtype
+		hr = type->GetGUID(MF_MT_SUBTYPE, &subtype);
+		//obtain the width and height
+		if (SUCCEEDED(hr))
+			hr = MFGetAttributeSize(type, MF_MT_FRAME_SIZE, &width, &height);
+		//Calculate the stride based on the subtype and width
+		if (SUCCEEDED(hr))
+			hr = MFGetStrideForBitmapInfoHeader(subtype.Data1, width, &tempStride);
+		// set the attribute so it can be read
+		if (SUCCEEDED(hr))
+			(void)type->SetUINT32(MF_MT_DEFAULT_STRIDE, UINT32(tempStride));
+	}
+
+	if (SUCCEEDED(hr))
+			*stride = tempStride;
+	return hr;
+}
+
+//Method from IMFSourceReaderCallback
+HRESULT VideoCaptureDevice::OnReadSample(HRESULT status, DWORD /*streamIndex*/, DWORD /*streamFlags*/, LONGLONG /*timeStamp*/, IMFSample *sample)
+{
+	HRESULT hr = S_OK;
+	IMFMediaBuffer *mediaBuffer = NULL;
+
+	EnterCriticalSection(&m_CriticalSection);
+
+	if (FAILED(status))
+		hr = status;
+
+	if (SUCCEEDED(hr))
+	{
+		if (sample)
+		{// Get the video frame buffer from the sample.
+			hr = sample->GetBufferByIndex(0, &mediaBuffer);
+			// Draw the frame.
+			if (SUCCEEDED(hr))
+			{
+				BYTE* data;
+				mediaBuffer->Lock(&data, NULL, NULL);
+				//This is a good place to perform color conversion and drawing
+				//Instead we're copying the data to a buffer
+				CopyMemory(rawData, data, m_Width*m_Height * m_BytesPerPixel);
+
+			}
+		}
+	}
+	// Request the next frame.
+	if (SUCCEEDED(hr))
+		hr = m_SourceReader->ReadSample((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, NULL, NULL, NULL, NULL);
+
+	if (FAILED(hr))
+	{
+		//Notify there was an error
+		printf("Error HRESULT = 0x%d", hr);
+		PostMessage(NULL, 1, (WPARAM)hr, 0L);
+	}
+	if (mediaBuffer) { mediaBuffer->Release(); mediaBuffer = NULL; }
+
+	LeaveCriticalSection(&m_CriticalSection);
+	return hr;
+}
+//Method from IMFSourceReaderCallback 
+STDMETHODIMP VideoCaptureDevice::OnEvent(DWORD, IMFMediaEvent *) { return S_OK; }
+//Method from IMFSourceReaderCallback 
+STDMETHODIMP VideoCaptureDevice::OnFlush(DWORD) { return S_OK; }

@@ -1,6 +1,6 @@
 include_rules
 
-DotDiffCppLinkerArgs += user32.lib d3d11.lib dxgi.lib d3dcompiler.lib
+DotDiffCppLinkerArgs += user32.lib d3d11.lib dxgi.lib d3dcompiler.lib Mfplat.lib Mf.lib Mfreadwrite.lib mfuuid.lib shlwapi.lib Ole32.lib
 DotDiffCppLinkerArgs += /DEBUG -OUT:"$(FinalBinDir)$(DotDiffCppOutputFilename).exe"
 
 DotDiffCppLinkerOutputFiles = $(FinalBinDir)$(DotDiffCppOutputFilename).exe $(FinalBinDir)$(DotDiffCppOutputFilename).pdb
