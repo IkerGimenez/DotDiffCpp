@@ -12,7 +12,9 @@
 
 #include <vector>
 #include <string>
-#include <winnt.h>
+#include <span>
+
+#include <stdio.h>
 
 #define DEFAULT_CLIENT_WIDTH 1280
 #define DEFAULT_CLIENT_HEIGHT 720
@@ -49,50 +51,26 @@ template <class T> void SafeRelease(T **ppT)
     }
 }
 
-// DotDiffCpp Functions
-HRESULT EnumerateVideoCaptureDevices(IMFAttributes ** ppAttributes, IMFActivate *** pppDevices, UINT32 & numDevices);
-HRESULT AttributeGetString(IMFAttributes *pAttributes, REFGUID guidKey, WCHAR *& outString, UINT32 & outStrLen);
-HRESULT CreateMediaSourceObject(IMFActivate ** ppDevices, IMFMediaSource ** ppSource);
-
-#define CLEAN_ATTRIBUTES() \
-    if (attributes) \
-    { \
-        attributes->Release(); \
-        attributes = NULL; \
-    } \
-    for (DWORD i = 0; i < count; i++) \
-    { \
-        if (&devices[i]) \
-        { \
-            devices[i]->Release(); \
-            devices[i] = NULL; \
-        } \
-    } \
-    CoTaskMemFree(devices); \
-    return hr;
-
-bool ConvertWideStringToNarrow(wchar_t * wideString, const UINT32 wideStringLen, char * destString, const UINT32 destSize);                                                               
-
 // VideoCaptureDevice
 //specialized class
 class VideoCaptureDevice: public IMFSourceReaderCallback
 {
     CRITICAL_SECTION m_CriticalSection;
-    long m_ReferenceCount;
-    WCHAR * m_wSymbolicLink;
-    UINT32 m_SymbolicLinkLen;
-    IMFSourceReader * m_SourceReader;
+    long m_ReferenceCount = 1;
+    WCHAR * m_wSymbolicLink = nullptr;
+    UINT32 m_SymbolicLinkLen = 0;
+    IMFSourceReader * m_SourceReader = nullptr;
 
 public:
-    LONG m_Stride;
-    int m_BytesPerPixel;
+    LONG m_Stride = 0;
+    int m_BytesPerPixel = 0;
     GUID m_VideoFormat;
-    UINT m_Height;
-    UINT m_Width;
-    WCHAR deviceNameString[2048];
-    BYTE * rawData;
+    UINT m_Height = 0;
+    UINT m_Width = 0;
+    char deviceNameString[2048];
+    UINT32 deviceNameLen = 0;
+    BYTE * rawData = nullptr;
 
-    HRESULT CreateCaptureDevice(void);
     HRESULT SetSourceReader(IMFActivate * device);
     HRESULT IsMediaTypeSupported(IMFMediaType * type);
     HRESULT GetDefaultStride(IMFMediaType * pType, LONG * plStride);
@@ -111,7 +89,35 @@ public:
     STDMETHODIMP OnFlush(DWORD);
 };
 
+// DotDiffCpp Functions
+HRESULT EnumerateVideoCaptureDevices(IMFActivate *** pppDevices, UINT32 & outNumDevices);
+void PopulateVideoCaptureDeviceArray(IMFActivate *** pppDevices, const UINT32 numDevices, std::vector<VideoCaptureDevice> & outVideoCaptureDevices, std::vector<std::span<char>> & outVcdNames);
+HRESULT AttributeGetString(IMFAttributes *pAttributes, REFGUID guidKey, WCHAR *& outString, UINT32 & outStrLen);
 
+#define CLEAN_ATTRIBUTES() \
+{ \
+    if (pAttributes != nullptr) \
+    { \
+        pAttributes->Release(); \
+        pAttributes = NULL; \
+    } \
+}
+
+#define CLEAN_DEVICES() \
+{ \
+    for (DWORD i = 0; i < count; i++) \
+    { \
+        if (&(ppDevices[i])) \
+        { \
+            ppDevices[i]->Release(); \
+            devices[i] = NULL; \
+        } \
+    } \
+    CoTaskMemFree(devices); \
+}
+
+
+int ConvertWideStringToNarrow(wchar_t * wideString, const UINT32 wideStringLen, char * destString, const UINT32 destSize); 
 
 // Program entrypoint
 int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*/, int nShowCmd)
@@ -170,15 +176,12 @@ int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*
     bool showNewCaptureSessionWindow = false;
     
     // Video capture devices
-    IMFAttributes * pAttributes = nullptr;
     IMFActivate ** ppDevices = nullptr;
     UINT32 numDevices = 0;
-    WCHAR * deviceName = nullptr;
-    UINT32 deviceNameLen;
     UINT32 selectedDeviceIdx = 0;
-    IMFMediaSource * pDeviceSource = nullptr;
 
-    std::vector<std::string> videoCaptureDeviceNames;
+    std::vector<VideoCaptureDevice> videoCaptureDevices;
+    std::vector<std::span<char>> vcdNames;
 
     // Our state
     bool show_demo_window = true;
@@ -249,35 +252,23 @@ int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*
                 ImGui::Begin("New session configuration", &showNewCaptureSessionWindow);
                 if (numDevices == 0)
                 {
-                    EnumerateVideoCaptureDevices(&pAttributes, &ppDevices, numDevices);
+                    EnumerateVideoCaptureDevices(&ppDevices, numDevices);
+
+                    if(numDevices > 0)
+                    {
+                        PopulateVideoCaptureDeviceArray(&ppDevices, numDevices, videoCaptureDevices, vcdNames);
+                    }
                 }
 
                 if (numDevices > 0)
                 {
-                    if (videoCaptureDeviceNames.empty())
-                    {
-                        videoCaptureDeviceNames.emplace_back("No device selected");
-                        for (UINT32 deviceIdx = 0; deviceIdx < numDevices; ++deviceIdx)
-                        {
-                            AttributeGetString(ppDevices[deviceIdx], MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, deviceName, deviceNameLen);
-                            std::string& currDeviceNarrowName = videoCaptureDeviceNames.emplace_back();
-                            currDeviceNarrowName.resize(deviceNameLen * 3); // Worst case for UTF-16 to UTF-8 conversion, the string needs 3 times the length
-
-                            bool conversionSuccess = ConvertWideStringToNarrow(deviceName, deviceNameLen, currDeviceNarrowName.data(), deviceNameLen * 3);
-                            if (!conversionSuccess)
-                            {
-                                currDeviceNarrowName = "Error converting device name to UTF-8 from UTF-16";
-                            }
-                        }
-                    }
-
-                    const char * comboPreviewValue = videoCaptureDeviceNames[selectedDeviceIdx].c_str();
+                    const char * comboPreviewValue = vcdNames[selectedDeviceIdx].data();
                     if(ImGui::BeginCombo("Video Capture Device", comboPreviewValue))
                     {
-                        for (UINT32 deviceIdx = 0 ; deviceIdx < (UINT32)videoCaptureDeviceNames.size() ; ++deviceIdx)
+                        for (UINT32 deviceIdx = 0 ; deviceIdx < (UINT32)vcdNames.size() ; ++deviceIdx)
                         {
                             const bool isSelected = (selectedDeviceIdx == deviceIdx);
-                            if(ImGui::Selectable(videoCaptureDeviceNames[deviceIdx].c_str(), isSelected))
+                            if(ImGui::Selectable(vcdNames[deviceIdx].data(), isSelected))
                             {
                                 selectedDeviceIdx = deviceIdx;
                             }
@@ -289,20 +280,18 @@ int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*
                         }
                         ImGui::EndCombo();
                     }
-
                 }
                 else
                 {
                     ImGui::Text("No compatible video capture devices detected. Make sure your device is properly connected and that it is recognized as a video capture device by Windows.");
                 }
 
-                const bool noCompatibleDevices = videoCaptureDeviceNames.size() == 1;
-                const bool noValidDeviceSelected = selectedDeviceIdx == 0;
-                ImGui::BeginDisabled(noCompatibleDevices || noValidDeviceSelected); // Disable start session button if no compatible devices detected
+                const bool noCompatibleDevices = videoCaptureDevices.size() == 0;
+                ImGui::BeginDisabled(noCompatibleDevices); // Disable start session button if no compatible devices detected
                 if(ImGui::Button("Start Session"))
                 {
+                    videoCaptureDevices[selectedDeviceIdx].SetSourceReader(ppDevices[selectedDeviceIdx]);
                     showNewCaptureSessionWindow = false;
-                    CreateMediaSourceObject(ppDevices, &pDeviceSource);
                 }
                 ImGui::EndDisabled();
                 ImGui::SameLine();
@@ -315,17 +304,7 @@ int WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*
         }
 
         {
-            if(pDeviceSource != nullptr)
-            {
-                HRESULT hResult = S_OK;
-                IMFAttributes * pSourceReaderAttributes = nullptr;
 
-                hResult = MFCreateAttributes(&pSourceReaderAttributes, 1);
-                if(SUCCEEDED(hResult))
-                {
-                    //hResult = pSourceReaderAttributes->SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK, 
-                }
-            }
         }
 
         // Rendering
@@ -470,24 +449,52 @@ void CleanupRenderTarget()
     if (g_mainRenderTargetView) { g_mainRenderTargetView->Release(); g_mainRenderTargetView = nullptr; }
 }
 
-HRESULT EnumerateVideoCaptureDevices(IMFAttributes ** ppAttributes, IMFActivate *** pppDevices, UINT32 & numDevices)
+HRESULT EnumerateVideoCaptureDevices(IMFActivate *** pppDevices, UINT32 & outNumDevices)
 {
+    IMFAttributes * pAttributes = nullptr;
     const UINT32 cElements = 1;
 
-    HRESULT hResult = MFCreateAttributes(ppAttributes, cElements);
+    HRESULT hResult = MFCreateAttributes(&pAttributes, cElements);
     if(SUCCEEDED(hResult))
     {
-        hResult = (*ppAttributes)->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
+        hResult = pAttributes->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
 
         if(SUCCEEDED(hResult))
         {
-            hResult = MFEnumDeviceSources(*ppAttributes, pppDevices, &numDevices); 
+            hResult = MFEnumDeviceSources(pAttributes, pppDevices, &outNumDevices); 
         }
     }
+
+    CLEAN_ATTRIBUTES()
 
     return hResult;
 }
 
+void PopulateVideoCaptureDeviceArray(IMFActivate *** pppDevices, const UINT32 numDevices, std::vector<VideoCaptureDevice> & outVideoCaptureDevices, std::vector<std::span<char>> & outVcdNames)
+{
+    IMFActivate ** ppDevices = *pppDevices;
+    WCHAR * deviceName = nullptr;
+    UINT32 deviceNameLen = 0;
+
+    if (numDevices > 0)
+    {
+        outVideoCaptureDevices.resize(numDevices);
+        outVcdNames.resize(numDevices);
+        
+        for(UINT32 deviceIdx = 0 ; deviceIdx < numDevices ; ++deviceIdx)
+        {
+            AttributeGetString(ppDevices[deviceIdx], MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, deviceName, deviceNameLen);
+            int numBytesWritten = ConvertWideStringToNarrow(deviceName, deviceNameLen, outVideoCaptureDevices[deviceIdx].deviceNameString, ARRAYSIZE(outVideoCaptureDevices[deviceIdx].deviceNameString));
+            if(!numBytesWritten)
+            {
+                 snprintf(outVideoCaptureDevices[deviceIdx].deviceNameString, ARRAYSIZE(outVideoCaptureDevices[deviceIdx].deviceNameString), "Error converting device name to UTF-8 from UTF-16");
+            }
+            outVcdNames[deviceIdx] = std::span{outVideoCaptureDevices[deviceIdx].deviceNameString, (size_t)numBytesWritten};
+        }
+    }
+}
+
+// TODO(Memory): Replace call to new with frame allocator calls
 HRESULT AttributeGetString(IMFAttributes *pAttributes, REFGUID guidKey, WCHAR *& outString, UINT32 & outStrLen)
 {
     HRESULT hResult = S_OK;
@@ -512,49 +519,21 @@ HRESULT AttributeGetString(IMFAttributes *pAttributes, REFGUID guidKey, WCHAR *&
     return hResult;
 }
 
-HRESULT CreateMediaSourceObject(IMFActivate ** ppDevices, IMFMediaSource ** ppSource)
-{
-    IMFMediaSource * pSource = nullptr;
-    HRESULT hResult = ppDevices[0]->ActivateObject(IID_PPV_ARGS(&pSource));
-
-    if(SUCCEEDED(hResult))
-    {
-        *ppSource = pSource;
-        (*ppSource)->AddRef();
-    }
-
-    return hResult;
-}
-
-bool ConvertWideStringToNarrow(wchar_t * wideString, const UINT32 wideStringLen, char * destString, const UINT32 destSize)
+int ConvertWideStringToNarrow(wchar_t * wideString, const UINT32 wideStringLen, char * destString, const UINT32 destSize)
 {
     int result = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wideString, (int)wideStringLen, destString, destSize, NULL, NULL);
 
-    // 0 means no characters were written to the destination string
-    return (result != 0);
+    return result;
 }
 
 VideoCaptureDevice::VideoCaptureDevice()
 {
 	InitializeCriticalSection(&m_CriticalSection);
-	m_ReferenceCount = 1;
-	m_wSymbolicLink = NULL;
-	m_SymbolicLinkLen = 0;
-	m_Width = 0;
-	m_Height = 0;
-	m_SourceReader = NULL;
-	rawData = NULL;
-	
+    ZeroMemory(deviceNameString, ARRAYSIZE(deviceNameString));
 }
 
 VideoCaptureDevice::~VideoCaptureDevice()
 {
-	
-	if (m_wSymbolicLink)
-	{	
-		delete m_wSymbolicLink;
-		m_wSymbolicLink = NULL;
-	}
 	EnterCriticalSection(&m_CriticalSection);
 
 	if (m_SourceReader)
@@ -578,109 +557,70 @@ VideoCaptureDevice::~VideoCaptureDevice()
 	DeleteCriticalSection(&m_CriticalSection);
 }
 
-HRESULT VideoCaptureDevice::CreateCaptureDevice()
-{
-	HRESULT hr = S_OK;
-	
-	//this is important!!
-	hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-
-	UINT32 count = 0;
-	IMFAttributes *attributes = NULL;
-	IMFActivate **devices = NULL;
-
-	if (FAILED(hr)) { CLEAN_ATTRIBUTES() }
-	// Create an attribute store to specify enumeration parameters.
-	hr = MFCreateAttributes(&attributes, 1);
-
-	if (FAILED(hr)) { CLEAN_ATTRIBUTES() }
-
-	//The attribute to be requested is devices that can capture video
-	hr = attributes->SetGUID(
-		MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
-		MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID
-	);
-	if (FAILED(hr)) { CLEAN_ATTRIBUTES() }
-	//Enummerate the video capture devices
-	hr = MFEnumDeviceSources(attributes, &devices, &count);
-	
-	if (FAILED(hr)) { CLEAN_ATTRIBUTES() }
-	//if there are any available devices
-	if (count > 0)
-	{
-		/*If you actually need to select one of the available devices
-		this is the place to do it. For this example the first device
-		is selected
-		*/
-		//Get a source reader from the first available device
-		SetSourceReader(devices[0]);
-		
-		WCHAR *nameString = NULL;
-		// Get the human-friendly name of the device
-		UINT32 cchName;
-		hr = devices[0]->GetAllocatedString(
-			MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
-			&nameString, &cchName);
-
-		if (SUCCEEDED(hr))
-		{
-			//allocate a byte buffer for the raw pixel data
-			m_BytesPerPixel = abs(m_Stride) / m_Width;
-			rawData = new BYTE[m_Width*m_Height * m_BytesPerPixel];
-			wcscpy_s(deviceNameString, ARRAYSIZE(deviceNameString), nameString); 
-		}
-		CoTaskMemFree(nameString);
-	}
-
-	//clean
-	CLEAN_ATTRIBUTES()
-}
-
-
 HRESULT VideoCaptureDevice::SetSourceReader(IMFActivate *device)
 {
 	HRESULT hr = S_OK;
 
-	IMFMediaSource *source = NULL;
-	IMFAttributes *attributes = NULL;
-	IMFMediaType *mediaType = NULL;
+	IMFMediaSource * pSource = NULL;
+	IMFAttributes * pAttributes = NULL;
+	IMFMediaType * pMediaType = NULL;
 
 	EnterCriticalSection(&m_CriticalSection);
 
-	hr = device->ActivateObject(__uuidof(IMFMediaSource), (void**)&source);
+	hr = device->ActivateObject(__uuidof(IMFMediaSource), (void**)&pSource);
 
 	//get symbolic link for the device
 	if(SUCCEEDED(hr))
+    {
 		hr = device->GetAllocatedString(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, &m_wSymbolicLink, &m_SymbolicLinkLen);
+    }
 	//Allocate attributes
 	if (SUCCEEDED(hr))
-		hr = MFCreateAttributes(&attributes, 2);
+    {
+		hr = MFCreateAttributes(&pAttributes, 2);
+    }
 	//get attributes
 	if (SUCCEEDED(hr))
-		hr = attributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE);
+    {
+		hr = pAttributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE);
+    }
 	// Set the callback pointer.
 	if (SUCCEEDED(hr))
-		hr = attributes->SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK,this);
+    {
+		hr = pAttributes->SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK,this);
+    }
 	//Create the source reader
 	if (SUCCEEDED(hr))
-		hr = MFCreateSourceReaderFromMediaSource(source,attributes,&m_SourceReader);
+    {
+		hr = MFCreateSourceReaderFromMediaSource(pSource,pAttributes,&m_SourceReader);
+    }
 	// Try to find a suitable output type.
 	if (SUCCEEDED(hr))
 	{
 		for (DWORD i = 0; ; i++)
 		{
-			hr = m_SourceReader->GetNativeMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM,i,&mediaType);
-			if (FAILED(hr)) { break; }
-			
-			hr = IsMediaTypeSupported(mediaType);
-			if (FAILED(hr)) { break; }
+			hr = m_SourceReader->GetNativeMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM,i,&pMediaType);
+			if (FAILED(hr)) 
+            { 
+                break; 
+            }
+			hr = IsMediaTypeSupported(pMediaType);
+			if (FAILED(hr))
+            { 
+                break;
+            }
 			//Get width and height
-			MFGetAttributeSize(mediaType, MF_MT_FRAME_SIZE, &m_Width, &m_Height);
-			if (mediaType) 
-			{ mediaType->Release(); mediaType = NULL; }
+			MFGetAttributeSize(pMediaType, MF_MT_FRAME_SIZE, &m_Width, &m_Height);
+			if (pMediaType) 
+			{ 
+                pMediaType->Release(); 
+                pMediaType = NULL; 
+            }
 
 			if (SUCCEEDED(hr))// Found an output type.
+            {
 				break;
+            }
 		}
 	}
 	if (SUCCEEDED(hr))
@@ -691,15 +631,25 @@ HRESULT VideoCaptureDevice::SetSourceReader(IMFActivate *device)
 
 	if (FAILED(hr))
 	{
-		if (source)
+		if (pSource)
 		{
-			source->Shutdown();	
+			pSource->Shutdown();	
 		}
 		Close();
 	}
-	if (source) { source->Release(); source = NULL; }
-	if (attributes) { attributes->Release(); attributes = NULL; }
-	if (mediaType) { mediaType->Release(); mediaType = NULL; }
+	if (pSource) 
+    { 
+        pSource->Release(); 
+        pSource = NULL; 
+    }
+
+	if (pMediaType) 
+    { 
+        pMediaType->Release(); 
+        pMediaType = NULL; 
+    }
+
+    CLEAN_ATTRIBUTES();
 
 	LeaveCriticalSection(&m_CriticalSection);
 	return hr;
