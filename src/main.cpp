@@ -51,6 +51,15 @@ template <class T> void SafeRelease(T **ppT)
     }
 }
 
+struct VideoCaptureDeviceMediaType
+{
+    LONG m_Stride = 0;
+    UINT32 m_BytesPerPixel = 0;
+    GUID m_VideoFormat;
+    UINT m_Height = 0;
+    UINT m_Width = 0;
+};
+
 // VideoCaptureDevice
 //specialized class
 class VideoCaptureDevice: public IMFSourceReaderCallback
@@ -62,18 +71,14 @@ class VideoCaptureDevice: public IMFSourceReaderCallback
     IMFSourceReader * m_SourceReader = nullptr;
 
 public:
-    LONG m_Stride = 0;
-    int m_BytesPerPixel = 0;
-    GUID m_VideoFormat;
-    UINT m_Height = 0;
-    UINT m_Width = 0;
+    std::vector<VideoCaptureDeviceMediaType> mediaTypes;
     char deviceNameString[2048];
     UINT32 deviceNameLen = 0;
     BYTE * rawData = nullptr;
 
     HRESULT SetSourceReader(IMFActivate * device);
-    HRESULT IsMediaTypeSupported(IMFMediaType * type);
-    HRESULT GetDefaultStride(IMFMediaType * pType, LONG * plStride);
+    HRESULT IsMediaTypeSupported(IMFMediaType * pType, LONG & outStride, GUID & outSubtype);
+    HRESULT GetDefaultStride(IMFMediaType * pType, LONG & outStride);
     HRESULT Close();
     VideoCaptureDevice();
     ~VideoCaptureDevice();
@@ -597,6 +602,9 @@ HRESULT VideoCaptureDevice::SetSourceReader(IMFActivate *device)
 	// Try to find a suitable output type.
 	if (SUCCEEDED(hr))
 	{
+        LONG stride = 0;
+        UINT width = 0, height = 0;
+	    GUID subtype = { 0 };
 		for (DWORD i = 0; ; i++)
 		{
 			hr = m_SourceReader->GetNativeMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM,i,&pMediaType);
@@ -604,26 +612,26 @@ HRESULT VideoCaptureDevice::SetSourceReader(IMFActivate *device)
             { 
                 break; 
             }
-			hr = IsMediaTypeSupported(pMediaType);
+			hr = IsMediaTypeSupported(pMediaType, stride, subtype);
 			if (FAILED(hr))
             { 
                 break;
             }
 			//Get width and height
-			MFGetAttributeSize(pMediaType, MF_MT_FRAME_SIZE, &m_Width, &m_Height);
+			MFGetAttributeSize(pMediaType, MF_MT_FRAME_SIZE, &width, &height);
+
+            mediaTypes.emplace_back(VideoCaptureDeviceMediaType{ stride, abs(stride)/width, subtype, height, width });
+
 			if (pMediaType) 
 			{ 
                 pMediaType->Release(); 
                 pMediaType = NULL; 
             }
-
-			if (SUCCEEDED(hr))// Found an output type.
-            {
-				break;
-            }
 		}
 	}
-	if (SUCCEEDED(hr))
+
+    // If any compatible media types found
+	if (mediaTypes.size() > 0)
 	{
 		// Ask for the first sample.
 		hr = m_SourceReader->ReadSample((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM,	0, NULL, NULL,NULL,NULL);
@@ -655,24 +663,19 @@ HRESULT VideoCaptureDevice::SetSourceReader(IMFActivate *device)
 	return hr;
 }
 
-HRESULT VideoCaptureDevice::IsMediaTypeSupported(IMFMediaType *pType)
+HRESULT VideoCaptureDevice::IsMediaTypeSupported(IMFMediaType *pType, LONG & outStride, GUID & outSubtype)
 {
 	HRESULT hr = S_OK;
 
-	//BOOL bFound = FALSE;
-	GUID subtype = { 0 };
-
 	//Get the stride for this format so we can calculate the number of bytes per pixel
-	GetDefaultStride(pType, &m_Stride);
+	GetDefaultStride(pType, outStride);
 
 	if (FAILED(hr)) { return hr; }
-	hr = pType->GetGUID(MF_MT_SUBTYPE, &subtype);
-
-	m_VideoFormat = subtype;
+	hr = pType->GetGUID(MF_MT_SUBTYPE, &outSubtype);
 
 	if (FAILED(hr))	{return hr;	}
 
-	if (subtype == MFVideoFormat_RGB32 || subtype == MFVideoFormat_RGB24 || subtype == MFVideoFormat_YUY2 || subtype == MFVideoFormat_NV12)
+	if (outSubtype == MFVideoFormat_RGB32 || outSubtype == MFVideoFormat_RGB24 || outSubtype == MFVideoFormat_YUY2 || outSubtype == MFVideoFormat_NV12)
 		return S_OK;
 	else
 		return S_FALSE;
@@ -719,12 +722,10 @@ ULONG VideoCaptureDevice::AddRef()
 
 
 //Calculates the default stride based on the format and size of the frames
-HRESULT VideoCaptureDevice::GetDefaultStride(IMFMediaType *type, LONG *stride)
+HRESULT VideoCaptureDevice::GetDefaultStride(IMFMediaType * pType, LONG & outStride)
 {
-	LONG tempStride = 0;
-
 	// Try to get the default stride from the media type.
-	HRESULT hr = type->GetUINT32(MF_MT_DEFAULT_STRIDE, (UINT32*)&tempStride);
+	HRESULT hr = pType->GetUINT32(MF_MT_DEFAULT_STRIDE, (UINT32*)&outStride);
 	if (FAILED(hr))
 	{
 		//Setting this atribute to NULL we can obtain the default stride
@@ -734,20 +735,29 @@ HRESULT VideoCaptureDevice::GetDefaultStride(IMFMediaType *type, LONG *stride)
 		UINT32 height = 0;
 
 		// Obtain the subtype
-		hr = type->GetGUID(MF_MT_SUBTYPE, &subtype);
+		hr = pType->GetGUID(MF_MT_SUBTYPE, &subtype);
 		//obtain the width and height
 		if (SUCCEEDED(hr))
-			hr = MFGetAttributeSize(type, MF_MT_FRAME_SIZE, &width, &height);
+        {
+			hr = MFGetAttributeSize(pType, MF_MT_FRAME_SIZE, &width, &height);
+        }
 		//Calculate the stride based on the subtype and width
 		if (SUCCEEDED(hr))
-			hr = MFGetStrideForBitmapInfoHeader(subtype.Data1, width, &tempStride);
+        {
+			hr = MFGetStrideForBitmapInfoHeader(subtype.Data1, width, &outStride);
+        }
 		// set the attribute so it can be read
 		if (SUCCEEDED(hr))
-			(void)type->SetUINT32(MF_MT_DEFAULT_STRIDE, UINT32(tempStride));
+        {
+			(void)pType->SetUINT32(MF_MT_DEFAULT_STRIDE, UINT32(outStride));
+        }
 	}
 
-	if (SUCCEEDED(hr))
-			*stride = tempStride;
+	if (FAILED(hr))
+    {
+        outStride = 0;
+    }
+
 	return hr;
 }
 
@@ -774,7 +784,7 @@ HRESULT VideoCaptureDevice::OnReadSample(HRESULT status, DWORD /*streamIndex*/, 
 				mediaBuffer->Lock(&data, NULL, NULL);
 				//This is a good place to perform color conversion and drawing
 				//Instead we're copying the data to a buffer
-				CopyMemory(rawData, data, m_Width*m_Height * m_BytesPerPixel);
+				//CopyMemory(rawData, data, m_Width*m_Height * m_BytesPerPixel);
 
 			}
 		}
